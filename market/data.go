@@ -23,6 +23,12 @@ func Get(symbol string) (*Data, error) {
 		return nil, fmt.Errorf("获取3分钟K线失败: %v", err)
 	}
 
+	// 获取4小时K线数据 (最近100个) - 先获取，用于30分钟fallback
+	klines4h, err = WSMonitorCli.GetCurrentKlines(symbol, "4h") // 多获取用于计算指标
+	if err != nil {
+		return nil, fmt.Errorf("获取4小时K线失败: %v", err)
+	}
+
 	// 获取5分钟K线数据（如果失败，使用3分钟数据作为fallback）
 	klines5m, err = WSMonitorCli.GetCurrentKlines(symbol, "5m")
 	if err != nil {
@@ -31,18 +37,16 @@ func Get(symbol string) (*Data, error) {
 		klines5m = klines3m // 使用3分钟数据作为fallback
 	}
 
-	// 获取30分钟K线数据（如果失败，使用4小时数据作为fallback）
+	// 获取30分钟K线数据（如果失败或数据不足，使用4小时数据作为fallback）
 	klines30m, err = WSMonitorCli.GetCurrentKlines(symbol, "30m")
 	if err != nil {
 		// 如果30分钟数据获取失败，使用4小时数据作为fallback
 		log.Printf("⚠️  获取 %s 30分钟K线失败，使用4小时数据: %v", symbol, err)
 		klines30m = klines4h // 使用4小时数据作为fallback
-	}
-
-	// 获取4小时K线数据 (最近100个)
-	klines4h, err = WSMonitorCli.GetCurrentKlines(symbol, "4h") // 多获取用于计算指标
-	if err != nil {
-		return nil, fmt.Errorf("获取4小时K线失败: %v", err)
+	} else if len(klines30m) < 11 {
+		// 如果30分钟数据不足，也尝试使用4小时数据
+		log.Printf("⚠️  %s 30分钟K线数据不足（%d根 < 11根），使用4小时数据（%d根）", symbol, len(klines30m), len(klines4h))
+		klines30m = klines4h
 	}
 
 	// 计算当前指标 (基于3分钟最新数据)
@@ -521,19 +525,50 @@ func parseFloat(v interface{}) (float64, error) {
 // period: ATR 周期，通常为 10
 // multiplier: 乘数，通常为 3.0
 func calculateSupertrend(klines []Kline, period int, multiplier float64, currentPrice float64) *SupertrendData {
+	// 如果数据不足，尝试使用更小的周期计算
+	actualPeriod := period
 	if len(klines) < period+1 {
-		return &SupertrendData{
-			Trend:  "none",
-			Signal: "none",
+		// 如果数据不足，使用可用数据的一半作为周期（至少为3）
+		if len(klines) < 3 {
+			log.Printf("⚠️  K线数据不足（%d根），无法计算Supertrend", len(klines))
+			return &SupertrendData{
+				Trend:  "none",
+				Signal: "none",
+			}
 		}
+		actualPeriod = len(klines) - 1
+		if actualPeriod < 3 {
+			actualPeriod = 3
+		}
+		log.Printf("⚠️  K线数据不足（%d根 < %d根），使用周期%d计算Supertrend", len(klines), period+1, actualPeriod)
 	}
 
 	// 计算 ATR
-	atr := calculateATR(klines, period)
+	atr := calculateATR(klines, actualPeriod)
 	if atr == 0 {
-		return &SupertrendData{
-			Trend:  "none",
-			Signal: "none",
+		// 如果ATR为0，尝试使用价格变化范围作为替代
+		if len(klines) >= 2 {
+			maxHigh := klines[0].High
+			minLow := klines[0].Low
+			for _, k := range klines {
+				if k.High > maxHigh {
+					maxHigh = k.High
+				}
+				if k.Low < minLow {
+					minLow = k.Low
+				}
+			}
+			atr = (maxHigh - minLow) / float64(len(klines))
+			if atr == 0 {
+				atr = currentPrice * 0.01 // 使用当前价格的1%作为默认ATR
+			}
+			log.Printf("⚠️  ATR为0，使用替代值: %.4f", atr)
+		} else {
+			log.Printf("⚠️  ATR为0且数据不足，无法计算Supertrend")
+			return &SupertrendData{
+				Trend:  "none",
+				Signal: "none",
+			}
 		}
 	}
 
