@@ -1,23 +1,30 @@
 # Git
 .git
 .gitignore
-.github
+.gitattributes
 
-# Docker
-Dockerfile
-docker-compose.yml
-.dockerignore
+# Documentation
+docs/
+*.md
+!README.md
 
 # IDE
-.idea
-.vscode
+.vscode/
+.idea/
 *.swp
 *.swo
 *~
 
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+decision_logs/
+
 # Build artifacts
 nofx
-nofx_test
 *.exe
 *.dll
 *.so
@@ -25,26 +32,18 @@ nofx_test
 
 # Test files
 *_test.go
-test_*
+test/
 
-# Documentation
-*.md
-!README.md
-docs/
-
-# Runtime data
-decision_logs/
-coin_pool_cache/
-*.log
-
-# Config files (should be mounted)
-config.json
-
-# Web build artifacts (but include source for multi-stage build)
+# Frontend (handled separately)
 web/node_modules/
 web/dist/
+web/.vite/
 
-# Temporary files
-tmp/
-temp/
-*.tmp
+# Config (mounted as volume)
+config.json
+config.db
+beta_codes.txt
+
+# Scripts
+*.sh
+!docker-build.sh

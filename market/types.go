@@ -15,6 +15,8 @@ type Data struct {
 	FundingRate       float64
 	IntradaySeries    *IntradayData
 	LongerTermContext *LongerTermData
+	SupertrendData    *SupertrendMultiTimeframe // Supertrend 多时间框架数据
+	VolumePriceData   *VolumePriceData          // 量价关系数据
 }
 
 // OIData Open Interest数据
@@ -117,6 +119,33 @@ type Alert struct {
 	Threshold float64   `json:"threshold"`
 	Message   string    `json:"message"`
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// SupertrendData 单个时间框架的 Supertrend 数据
+type SupertrendData struct {
+	Trend      string  `json:"trend"`       // "up" 或 "down"
+	Value      float64 `json:"value"`       // Supertrend 线值
+	ATR        float64 `json:"atr"`         // ATR 值
+	UpperBand  float64 `json:"upper_band"`  // 上轨
+	LowerBand  float64 `json:"lower_band"`  // 下轨
+	Signal     string  `json:"signal"`      // "long" 或 "short" 或 "none"
+}
+
+// SupertrendMultiTimeframe 多时间框架的 Supertrend 数据
+type SupertrendMultiTimeframe struct {
+	Timeframe3m  *SupertrendData `json:"timeframe_3m"`  // 3分钟
+	Timeframe5m  *SupertrendData `json:"timeframe_5m"`  // 5分钟
+	Timeframe30m *SupertrendData `json:"timeframe_30m"` // 30分钟
+	Timeframe4h  *SupertrendData `json:"timeframe_4h"`  // 4小时（大趋势）
+}
+
+// VolumePriceData 量价关系数据
+type VolumePriceData struct {
+	VolumeRatio3m  float64 `json:"volume_ratio_3m"`  // 3分钟成交量比率（当前/平均）
+	VolumeRatio5m  float64 `json:"volume_ratio_5m"`  // 5分钟成交量比率
+	VolumeRatio30m float64 `json:"volume_ratio_30m"` // 30分钟成交量比率
+	VolumeTrend     string  `json:"volume_trend"`     // "increasing", "decreasing", "stable"
+	PriceVolumeOK  bool    `json:"price_volume_ok"`   // 量价关系是否健康（价涨量增或价跌量减）
 }
 
 type Config struct {

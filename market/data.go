@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -12,17 +13,33 @@ import (
 
 // Get 获取指定代币的市场数据
 func Get(symbol string) (*Data, error) {
-	var klines3m, klines4h []Kline
+	var klines3m, klines5m, klines30m, klines4h []Kline
 	var err error
 	// 标准化symbol
 	symbol = Normalize(symbol)
-	// 获取3分钟K线数据 (最近10个)
+	// 获取3分钟K线数据 (最近100个)
 	klines3m, err = WSMonitorCli.GetCurrentKlines(symbol, "3m") // 多获取一些用于计算
 	if err != nil {
 		return nil, fmt.Errorf("获取3分钟K线失败: %v", err)
 	}
 
-	// 获取4小时K线数据 (最近10个)
+	// 获取5分钟K线数据（如果失败，使用3分钟数据作为fallback）
+	klines5m, err = WSMonitorCli.GetCurrentKlines(symbol, "5m")
+	if err != nil {
+		// 如果5分钟数据获取失败，使用3分钟数据作为fallback（但标记为数据不足）
+		log.Printf("⚠️  获取 %s 5分钟K线失败，使用3分钟数据: %v", symbol, err)
+		klines5m = klines3m // 使用3分钟数据作为fallback
+	}
+
+	// 获取30分钟K线数据（如果失败，使用4小时数据作为fallback）
+	klines30m, err = WSMonitorCli.GetCurrentKlines(symbol, "30m")
+	if err != nil {
+		// 如果30分钟数据获取失败，使用4小时数据作为fallback
+		log.Printf("⚠️  获取 %s 30分钟K线失败，使用4小时数据: %v", symbol, err)
+		klines30m = klines4h // 使用4小时数据作为fallback
+	}
+
+	// 获取4小时K线数据 (最近100个)
 	klines4h, err = WSMonitorCli.GetCurrentKlines(symbol, "4h") // 多获取用于计算指标
 	if err != nil {
 		return nil, fmt.Errorf("获取4小时K线失败: %v", err)
@@ -69,6 +86,12 @@ func Get(symbol string) (*Data, error) {
 	// 计算长期数据
 	longerTermData := calculateLongerTermData(klines4h)
 
+	// 计算多时间框架的 Supertrend
+	supertrendData := calculateSupertrendMultiTimeframe(klines3m, klines5m, klines30m, klines4h, currentPrice)
+
+	// 计算量价关系数据
+	volumePriceData := calculateVolumePriceData(klines3m, klines5m, klines30m, currentPrice)
+
 	return &Data{
 		Symbol:            symbol,
 		CurrentPrice:      currentPrice,
@@ -81,6 +104,8 @@ func Get(symbol string) (*Data, error) {
 		FundingRate:       fundingRate,
 		IntradaySeries:    intradayData,
 		LongerTermContext: longerTermData,
+		SupertrendData:    supertrendData,
+		VolumePriceData:   volumePriceData,
 	}, nil
 }
 
@@ -417,6 +442,44 @@ func Format(data *Data) string {
 		}
 	}
 
+	// 添加 Supertrend 多时间框架数据
+	if data.SupertrendData != nil {
+		sb.WriteString("Supertrend Multi-Timeframe Analysis:\n\n")
+
+		if data.SupertrendData.Timeframe3m != nil {
+			st := data.SupertrendData.Timeframe3m
+			sb.WriteString(fmt.Sprintf("3m: Trend=%s, Signal=%s, Value=%.4f, ATR=%.4f\n",
+				st.Trend, st.Signal, st.Value, st.ATR))
+		}
+
+		if data.SupertrendData.Timeframe5m != nil {
+			st := data.SupertrendData.Timeframe5m
+			sb.WriteString(fmt.Sprintf("5m: Trend=%s, Signal=%s, Value=%.4f, ATR=%.4f\n",
+				st.Trend, st.Signal, st.Value, st.ATR))
+		}
+
+		if data.SupertrendData.Timeframe30m != nil {
+			st := data.SupertrendData.Timeframe30m
+			sb.WriteString(fmt.Sprintf("30m: Trend=%s, Signal=%s, Value=%.4f, ATR=%.4f\n",
+				st.Trend, st.Signal, st.Value, st.ATR))
+		}
+
+		if data.SupertrendData.Timeframe4h != nil {
+			st := data.SupertrendData.Timeframe4h
+			sb.WriteString(fmt.Sprintf("4h (Major Trend): Trend=%s, Signal=%s, Value=%.4f, ATR=%.4f\n\n",
+				st.Trend, st.Signal, st.Value, st.ATR))
+		}
+	}
+
+	// 添加量价关系数据
+	if data.VolumePriceData != nil {
+		sb.WriteString("Volume-Price Analysis:\n\n")
+		sb.WriteString(fmt.Sprintf("Volume Ratio: 3m=%.2f, 5m=%.2f, 30m=%.2f\n",
+			data.VolumePriceData.VolumeRatio3m, data.VolumePriceData.VolumeRatio5m, data.VolumePriceData.VolumeRatio30m))
+		sb.WriteString(fmt.Sprintf("Volume Trend: %s\n", data.VolumePriceData.VolumeTrend))
+		sb.WriteString(fmt.Sprintf("Price-Volume OK: %v\n\n", data.VolumePriceData.PriceVolumeOK))
+	}
+
 	return sb.String()
 }
 
@@ -452,4 +515,209 @@ func parseFloat(v interface{}) (float64, error) {
 	default:
 		return 0, fmt.Errorf("unsupported type: %T", v)
 	}
+}
+
+// calculateSupertrend 计算单个时间框架的 Supertrend 指标
+// period: ATR 周期，通常为 10
+// multiplier: 乘数，通常为 3.0
+func calculateSupertrend(klines []Kline, period int, multiplier float64, currentPrice float64) *SupertrendData {
+	if len(klines) < period+1 {
+		return &SupertrendData{
+			Trend:  "none",
+			Signal: "none",
+		}
+	}
+
+	// 计算 ATR
+	atr := calculateATR(klines, period)
+	if atr == 0 {
+		return &SupertrendData{
+			Trend:  "none",
+			Signal: "none",
+		}
+	}
+
+	// 计算基础带（Basic Band）
+	// 使用最近一根K线的 HL2 (High + Low) / 2
+	lastKline := klines[len(klines)-1]
+	hl2 := (lastKline.High + lastKline.Low) / 2.0
+
+	upperBand := hl2 + (multiplier * atr)
+	lowerBand := hl2 - (multiplier * atr)
+
+	// 计算最终的 Supertrend 值（需要参考前一个 Supertrend）
+	// 简化版本：使用基础带作为初始值，然后根据价格位置调整
+	var finalUpperBand, finalLowerBand float64
+	var prevTrend string = "up" // 默认假设前一个趋势是向上
+
+	// 如果数据足够，尝试推断前一个趋势
+	if len(klines) >= 2 {
+		prevKline := klines[len(klines)-2]
+		prevHL2 := (prevKline.High + prevKline.Low) / 2.0
+		prevATR := calculateATR(klines[:len(klines)-1], period)
+		if prevATR > 0 {
+			prevUpper := prevHL2 + (multiplier * prevATR)
+			prevLower := prevHL2 - (multiplier * prevATR)
+			if prevKline.Close > prevUpper {
+				prevTrend = "up"
+			} else if prevKline.Close < prevLower {
+				prevTrend = "down"
+			}
+		}
+	}
+
+	// 根据前一个趋势确定最终的 Supertrend 值
+	if prevTrend == "up" {
+		finalUpperBand = math.Max(upperBand, lowerBand) // 保持上升趋势时，使用较大的值
+		finalLowerBand = lowerBand
+	} else {
+		finalUpperBand = upperBand
+		finalLowerBand = math.Min(upperBand, lowerBand) // 保持下降趋势时，使用较小的值
+	}
+
+	// 确定当前趋势和信号
+	var trend string
+	var signal string
+	var value float64
+
+	if currentPrice > finalUpperBand {
+		trend = "up"
+		signal = "long"
+		value = finalLowerBand
+	} else if currentPrice < finalLowerBand {
+		trend = "down"
+		signal = "short"
+		value = finalUpperBand
+	} else {
+		// 价格在上下轨之间，保持前一个趋势
+		trend = prevTrend
+		if trend == "up" {
+			signal = "long"
+			value = finalLowerBand
+		} else {
+			signal = "short"
+			value = finalUpperBand
+		}
+	}
+
+	return &SupertrendData{
+		Trend:     trend,
+		Value:     value,
+		ATR:       atr,
+		UpperBand: finalUpperBand,
+		LowerBand: finalLowerBand,
+		Signal:    signal,
+	}
+}
+
+// calculateSupertrendMultiTimeframe 计算多时间框架的 Supertrend
+func calculateSupertrendMultiTimeframe(klines3m, klines5m, klines30m, klines4h []Kline, currentPrice float64) *SupertrendMultiTimeframe {
+	// 使用标准参数：ATR period = 10, multiplier = 3.0
+	period := 10
+	multiplier := 3.0
+
+	// 确保每个时间框架都有数据，即使数据不足也返回一个有效的结构
+	result := &SupertrendMultiTimeframe{
+		Timeframe3m:  calculateSupertrend(klines3m, period, multiplier, currentPrice),
+		Timeframe5m:  calculateSupertrend(klines5m, period, multiplier, currentPrice),
+		Timeframe30m: calculateSupertrend(klines30m, period, multiplier, currentPrice),
+		Timeframe4h:  calculateSupertrend(klines4h, period, multiplier, currentPrice),
+	}
+
+	// 确保所有字段都不为 nil
+	if result.Timeframe3m == nil {
+		result.Timeframe3m = &SupertrendData{Trend: "none", Signal: "none"}
+	}
+	if result.Timeframe5m == nil {
+		result.Timeframe5m = &SupertrendData{Trend: "none", Signal: "none"}
+	}
+	if result.Timeframe30m == nil {
+		result.Timeframe30m = &SupertrendData{Trend: "none", Signal: "none"}
+	}
+	if result.Timeframe4h == nil {
+		result.Timeframe4h = &SupertrendData{Trend: "none", Signal: "none"}
+	}
+
+	return result
+}
+
+// calculateVolumePriceData 计算量价关系数据
+func calculateVolumePriceData(klines3m, klines5m, klines30m []Kline, currentPrice float64) *VolumePriceData {
+	data := &VolumePriceData{
+		VolumeTrend:    "stable",
+		PriceVolumeOK:  false, // 默认值
+	}
+
+	// 计算3分钟成交量比率
+	if len(klines3m) >= 20 {
+		currentVol := klines3m[len(klines3m)-1].Volume
+		sum := 0.0
+		for i := len(klines3m) - 20; i < len(klines3m)-1; i++ {
+			sum += klines3m[i].Volume
+		}
+		avgVol := sum / 19.0
+		if avgVol > 0 {
+			data.VolumeRatio3m = currentVol / avgVol
+		}
+	}
+
+	// 计算5分钟成交量比率
+	if len(klines5m) >= 20 {
+		currentVol := klines5m[len(klines5m)-1].Volume
+		sum := 0.0
+		for i := len(klines5m) - 20; i < len(klines5m)-1; i++ {
+			sum += klines5m[i].Volume
+		}
+		avgVol := sum / 19.0
+		if avgVol > 0 {
+			data.VolumeRatio5m = currentVol / avgVol
+		}
+	}
+
+	// 计算30分钟成交量比率
+	if len(klines30m) >= 20 {
+		currentVol := klines30m[len(klines30m)-1].Volume
+		sum := 0.0
+		for i := len(klines30m) - 20; i < len(klines30m)-1; i++ {
+			sum += klines30m[i].Volume
+		}
+		avgVol := sum / 19.0
+		if avgVol > 0 {
+			data.VolumeRatio30m = currentVol / avgVol
+		}
+	}
+
+	// 判断成交量趋势（基于3分钟数据）
+	if len(klines3m) >= 5 {
+		recentVols := make([]float64, 0, 5)
+		for i := len(klines3m) - 5; i < len(klines3m); i++ {
+			recentVols = append(recentVols, klines3m[i].Volume)
+		}
+		// 简单趋势判断：比较最近3根和之前2根的平均成交量
+		recentAvg := (recentVols[3] + recentVols[4]) / 2.0
+		olderAvg := (recentVols[0] + recentVols[1] + recentVols[2]) / 3.0
+		if recentAvg > olderAvg*1.1 {
+			data.VolumeTrend = "increasing"
+		} else if recentAvg < olderAvg*0.9 {
+			data.VolumeTrend = "decreasing"
+		} else {
+			data.VolumeTrend = "stable"
+		}
+	}
+
+	// 判断量价关系是否健康
+	// 价涨量增或价跌量减为健康
+	if len(klines3m) >= 2 {
+		priceChange := currentPrice - klines3m[len(klines3m)-2].Close
+		volumeChange := klines3m[len(klines3m)-1].Volume - klines3m[len(klines3m)-2].Volume
+
+		// 价涨量增 或 价跌量减
+		if (priceChange > 0 && volumeChange > 0) || (priceChange < 0 && volumeChange < 0) {
+			data.PriceVolumeOK = true
+		} else {
+			data.PriceVolumeOK = false
+		}
+	}
+
+	return data
 }
