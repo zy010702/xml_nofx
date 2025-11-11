@@ -16,6 +16,10 @@ type WSMonitor struct {
 	featuresMap    sync.Map
 	alertsChan     chan Alert
 	klineDataMap3m sync.Map // 存储每个交易对的K线历史数据
+	klineDataMap5m sync.Map // 存储每个交易对的5分钟K线历史数据
+	klineDataMap15m sync.Map // 存储每个交易对的15分钟K线历史数据
+	klineDataMap30m sync.Map // 存储每个交易对的30分钟K线历史数据
+	klineDataMap1h sync.Map // 存储每个交易对的1小时K线历史数据
 	klineDataMap4h sync.Map // 存储每个交易对的K线历史数据
 	tickerDataMap  sync.Map // 存储每个交易对的ticker数据
 	batchSize      int
@@ -32,7 +36,7 @@ type SymbolStats struct {
 }
 
 var WSMonitorCli *WSMonitor
-var subKlineTime = []string{"3m", "5m", "30m", "4h"} // 管理订阅流的K线周期
+var subKlineTime = []string{"3m", "5m", "15m", "30m", "1h", "4h"} // 管理订阅流的K线周期
 
 func NewWSMonitor(batchSize int) *WSMonitor {
 	WSMonitorCli = &WSMonitor{
@@ -89,23 +93,56 @@ func (m *WSMonitor) initializeHistoricalData() error {
 			defer wg.Done()
 			defer func() { <-semaphore }()
 
-			// 获取历史K线数据
-			klines, err := apiClient.GetKlines(s, "3m", 100)
+			// 获取历史K线数据 - 3m
+			klines3m, err := apiClient.GetKlines(s, "3m", 100)
 			if err != nil {
 				log.Printf("获取 %s 历史数据失败: %v", s, err)
-				return
+			} else if len(klines3m) > 0 {
+				m.klineDataMap3m.Store(s, klines3m)
+				log.Printf("已加载 %s 的历史K线数据-3m: %d 条", s, len(klines3m))
 			}
-			if len(klines) > 0 {
-				m.klineDataMap3m.Store(s, klines)
-				log.Printf("已加载 %s 的历史K线数据-3m: %d 条", s, len(klines))
+
+			// 获取历史K线数据 - 5m
+			klines5m, err := apiClient.GetKlines(s, "5m", 100)
+			if err != nil {
+				log.Printf("获取 %s 历史数据失败: %v", s, err)
+			} else if len(klines5m) > 0 {
+				m.klineDataMap5m.Store(s, klines5m)
+				log.Printf("已加载 %s 的历史K线数据-5m: %d 条", s, len(klines5m))
 			}
-			// 获取历史K线数据
+
+			// 获取历史K线数据 - 15m
+			klines15m, err := apiClient.GetKlines(s, "15m", 100)
+			if err != nil {
+				log.Printf("获取 %s 历史数据失败: %v", s, err)
+			} else if len(klines15m) > 0 {
+				m.klineDataMap15m.Store(s, klines15m)
+				log.Printf("已加载 %s 的历史K线数据-15m: %d 条", s, len(klines15m))
+			}
+
+			// 获取历史K线数据 - 30m
+			klines30m, err := apiClient.GetKlines(s, "30m", 100)
+			if err != nil {
+				log.Printf("获取 %s 历史数据失败: %v", s, err)
+			} else if len(klines30m) > 0 {
+				m.klineDataMap30m.Store(s, klines30m)
+				log.Printf("已加载 %s 的历史K线数据-30m: %d 条", s, len(klines30m))
+			}
+
+			// 获取历史K线数据 - 1h
+			klines1h, err := apiClient.GetKlines(s, "1h", 100)
+			if err != nil {
+				log.Printf("获取 %s 历史数据失败: %v", s, err)
+			} else if len(klines1h) > 0 {
+				m.klineDataMap1h.Store(s, klines1h)
+				log.Printf("已加载 %s 的历史K线数据-1h: %d 条", s, len(klines1h))
+			}
+
+			// 获取历史K线数据 - 4h
 			klines4h, err := apiClient.GetKlines(s, "4h", 100)
 			if err != nil {
 				log.Printf("获取 %s 历史数据失败: %v", s, err)
-				return
-			}
-			if len(klines4h) > 0 {
+			} else if len(klines4h) > 0 {
 				m.klineDataMap4h.Store(s, klines4h)
 				log.Printf("已加载 %s 的历史K线数据-4h: %d 条", s, len(klines4h))
 			}
@@ -180,11 +217,20 @@ func (m *WSMonitor) handleKlineData(symbol string, ch <-chan []byte, _time strin
 
 func (m *WSMonitor) getKlineDataMap(_time string) *sync.Map {
 	var klineDataMap *sync.Map
-	if _time == "3m" {
+	switch _time {
+	case "3m":
 		klineDataMap = &m.klineDataMap3m
-	} else if _time == "4h" {
+	case "5m":
+		klineDataMap = &m.klineDataMap5m
+	case "15m":
+		klineDataMap = &m.klineDataMap15m
+	case "30m":
+		klineDataMap = &m.klineDataMap30m
+	case "1h":
+		klineDataMap = &m.klineDataMap1h
+	case "4h":
 		klineDataMap = &m.klineDataMap4h
-	} else {
+	default:
 		klineDataMap = &sync.Map{}
 	}
 	return klineDataMap
@@ -234,22 +280,27 @@ func (m *WSMonitor) processKlineUpdate(symbol string, wsData KlineWSData, _time 
 
 func (m *WSMonitor) GetCurrentKlines(symbol string, _time string) ([]Kline, error) {
 	// 对每一个进来的symbol检测是否存在内类 是否的话就订阅它
+	symbol = strings.ToUpper(symbol)
 	value, exists := m.getKlineDataMap(_time).Load(symbol)
 	if !exists {
 		// 如果Ws数据未初始化完成时,单独使用api获取 - 兼容性代码 (防止在未初始化完成是,已经有交易员运行)
 		apiClient := NewAPIClient()
 		klines, err := apiClient.GetKlines(symbol, _time, 100)
-		m.getKlineDataMap(_time).Store(strings.ToUpper(symbol), klines) //动态缓存进缓存
-		subStr := m.subscribeSymbol(symbol, _time)
-		subErr := m.combinedClient.subscribeStreams(subStr)
-		log.Printf("动态订阅流: %v", subStr)
-		if subErr != nil {
-			return nil, fmt.Errorf("动态订阅%v分钟K线失败: %v", _time, subErr)
-		}
 		if err != nil {
 			return nil, fmt.Errorf("获取%v分钟K线失败: %v", _time, err)
 		}
-		return klines, fmt.Errorf("symbol不存在")
+		// 存储数据到缓存
+		m.getKlineDataMap(_time).Store(symbol, klines)
+		// 动态订阅流
+		subStr := m.subscribeSymbol(symbol, _time)
+		subErr := m.combinedClient.subscribeStreams(subStr)
+		if subErr != nil {
+			log.Printf("⚠️  动态订阅%v分钟K线流失败: %v (数据已获取)", _time, subErr)
+		} else {
+			log.Printf("✅ 动态订阅流成功: %v", subStr)
+		}
+		// 返回成功获取的数据
+		return klines, nil
 	}
 	return value.([]Kline), nil
 }

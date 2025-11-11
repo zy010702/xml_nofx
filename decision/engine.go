@@ -263,24 +263,32 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	// 2. Supertrend 多时间框架交易策略
 	sb.WriteString("# 📈 Supertrend 多时间框架交易策略\n\n")
 	sb.WriteString("## 核心交易规则：\n\n")
-	sb.WriteString("1. **信号触发条件**：\n")
-	sb.WriteString("   - 如果3分钟出现多/空信号，就去观察5分钟\n")
-	sb.WriteString("   - 如果5分钟也出现做多/空信号，并且大趋势（4小时）和30分钟保持一致，那就可以做开单了\n")
-	sb.WriteString("   - 大趋势（4小时）不可以超过30分钟的信号（即30分钟的信号不能与大趋势相反）\n\n")
-	sb.WriteString("2. **量价关系验证**：\n")
-	sb.WriteString("   - 必须关注量价关系，确保量价健康（价涨量增或价跌量减）\n")
-	sb.WriteString("   - 成交量比率应该合理（建议当前成交量与平均成交量的比率在0.8-2.0之间）\n\n")
-	sb.WriteString("3. **时间框架优先级**：\n")
-	sb.WriteString("   - 4小时：大趋势判断（最重要）\n")
-	sb.WriteString("   - 30分钟：中期趋势确认（必须与大趋势一致）\n")
-	sb.WriteString("   - 5分钟：入场信号确认（必须与3分钟信号一致）\n")
-	sb.WriteString("   - 3分钟：初始信号触发\n\n")
-	sb.WriteString("4. **开仓条件总结**：\n")
-	sb.WriteString("   - ✅ 3分钟出现多/空信号\n")
-	sb.WriteString("   - ✅ 5分钟也出现相同方向的多/空信号\n")
-	sb.WriteString("   - ✅ 30分钟信号与大趋势（4小时）保持一致\n")
-	sb.WriteString("   - ✅ 量价关系健康（PriceVolumeOK = true）\n")
-	sb.WriteString("   - ✅ 成交量比率合理（VolumeRatio > 0.8）\n\n")
+	sb.WriteString("1. **信号触发条件（优化后，更灵活）**：\n")
+	sb.WriteString("   - 优先级策略：15m+30m一致（最稳定）> 5m+15m一致 > 5m+30m一致\n")
+	sb.WriteString("   - 如果15m和30m一致，即使5m相反也可以开仓（15m+30m更稳定）\n")
+	sb.WriteString("   - 大趋势（4小时）不可以与交易信号相反（硬性要求）\n")
+	sb.WriteString("   - 如果4小时有明确的做多/做空信号，且与交易信号相反，则不能开仓\n\n")
+	sb.WriteString("2. **短期盈利优势判断（新增）**：\n")
+	sb.WriteString("   - 做多优势：RSI < 40（超卖反弹）、MACD转强、价格低于EMA20\n")
+	sb.WriteString("   - 做空优势：RSI > 60（超买回调）、MACD转弱、价格高于EMA20\n")
+	sb.WriteString("   - 有短期盈利优势时，信号更强，可以更积极开仓\n")
+	sb.WriteString("   - 没有明显优势时，需谨慎但也可以开仓（信号统一即可）\n\n")
+	sb.WriteString("3. **量价关系验证（放宽）**：\n")
+	sb.WriteString("   - 优先关注量价关系健康（价涨量增或价跌量减）\n")
+	sb.WriteString("   - 如果量价关系不够理想但信号较强，可以交易但需谨慎\n")
+	sb.WriteString("   - 成交量比率建议在0.3-3.0之间（<0.3极低需谨慎，>3.0异常波动需注意）\n\n")
+	sb.WriteString("4. **时间框架优先级**：\n")
+	sb.WriteString("   - 4小时：大趋势判断（最重要，不能与交易信号相反）\n")
+	sb.WriteString("   - 30分钟：中期趋势确认（与5-15分钟信号一致）\n")
+	sb.WriteString("   - 15分钟：中期趋势确认（与5分钟信号一致）\n")
+	sb.WriteString("   - 5分钟：入场信号触发\n\n")
+	sb.WriteString("5. **开仓条件总结（优化后）**：\n")
+	sb.WriteString("   - ✅ 15m+30m一致（优先）或 5m+15m一致 或 5m+30m一致\n")
+	sb.WriteString("   - ✅ 如果15m+30m一致，即使5m相反也可以开仓（15m+30m更稳定）\n")
+	sb.WriteString("   - ✅ 4小时大趋势不与交易信号相反（硬性要求）\n")
+	sb.WriteString("   - ✅ 有短期盈利优势时（RSI超买/超卖、MACD转强/转弱等），信号更强\n")
+	sb.WriteString("   - ⚠️ 量价关系健康为佳，但不强制（信号强时可放宽）\n")
+	sb.WriteString("   - ⚠️ 成交量比率>0.3为佳，<0.3极低需谨慎\n\n")
 
 	// 2. 硬约束（风险控制）- 动态生成
 	sb.WriteString("# 硬约束（风险控制）\n\n")
@@ -392,32 +400,33 @@ func buildUserPrompt(ctx *Context) string {
 		} else if marketData.VolumePriceData == nil {
 			sb.WriteString("⚠️  量价关系数据为 nil（数据未计算）\n\n")
 		} else if marketData.SupertrendData != nil && marketData.VolumePriceData != nil {
-			// 显示 Supertrend 状态信息（无论是否有信号）
+			// 显示 Supertrend 状态信息（只显示核心时间框架：5m、15m、30m、4h）
+			// 移除3m（太短期，噪音多）和1h（与4h重叠，冗余）
 			sb.WriteString("📊 Supertrend 多时间框架分析:\n")
 			st := marketData.SupertrendData
-			if st.Timeframe3m != nil {
-				sb.WriteString(fmt.Sprintf("  3m: %s (信号: %s)\n", st.Timeframe3m.Trend, st.Timeframe3m.Signal))
-			}
 			if st.Timeframe5m != nil {
 				sb.WriteString(fmt.Sprintf("  5m: %s (信号: %s)\n", st.Timeframe5m.Trend, st.Timeframe5m.Signal))
+			}
+			if st.Timeframe15m != nil {
+				sb.WriteString(fmt.Sprintf("  15m: %s (信号: %s)\n", st.Timeframe15m.Trend, st.Timeframe15m.Signal))
 			}
 			if st.Timeframe30m != nil {
 				sb.WriteString(fmt.Sprintf("  30m: %s (信号: %s)\n", st.Timeframe30m.Trend, st.Timeframe30m.Signal))
 			}
 			if st.Timeframe4h != nil {
-				sb.WriteString(fmt.Sprintf("  4h: %s (信号: %s)\n", st.Timeframe4h.Trend, st.Timeframe4h.Signal))
+				sb.WriteString(fmt.Sprintf("  4h (大趋势): %s (信号: %s)\n", st.Timeframe4h.Trend, st.Timeframe4h.Signal))
 			}
 			
 			// 显示量价关系
 			vp := marketData.VolumePriceData
 			sb.WriteString(fmt.Sprintf("  量价关系: %v (成交量比率: %.2f)\n", vp.PriceVolumeOK, vp.VolumeRatio3m))
 			
-			// 分析交易信号
-			signal := analyzeSupertrendSignal(marketData.SupertrendData, marketData.VolumePriceData)
+			// 分析交易信号（传入完整市场数据以判断短期盈利优势）
+			signal := analyzeSupertrendSignal(marketData.SupertrendData, marketData.VolumePriceData, marketData)
 			if signal != "" {
 				sb.WriteString(fmt.Sprintf("  ✅ 交易信号: %s\n\n", signal))
 			} else {
-				sb.WriteString("  ⚠️  当前不满足开仓条件（需要3m和5m信号一致，且30m和4h趋势一致，量价关系健康）\n\n")
+				sb.WriteString("  ⚠️  当前不满足开仓条件（需要5m、15m、30m中至少2个信号一致，且4h大趋势不相反）\n\n")
 			}
 		} else {
 			sb.WriteString("⚠️  Supertrend 数据未计算（可能K线数据不足）\n\n")
@@ -655,70 +664,155 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 
 // analyzeSupertrendSignal 分析 Supertrend 多时间框架信号
 // 返回交易信号描述字符串，如果满足开仓条件则返回具体信号，否则返回空字符串
-func analyzeSupertrendSignal(st *market.SupertrendMultiTimeframe, vp *market.VolumePriceData) string {
+// 优化策略：优先15m+30m一致（最稳定），即使5m相反也可以开仓；增加短期盈利优势判断
+func analyzeSupertrendSignal(st *market.SupertrendMultiTimeframe, vp *market.VolumePriceData, marketData *market.Data) string {
 	if st == nil || vp == nil {
 		return ""
 	}
 
 	var signals []string
 
-	// 检查各个时间框架的数据是否存在
-	if st.Timeframe3m == nil || st.Timeframe5m == nil || st.Timeframe30m == nil || st.Timeframe4h == nil {
+	// 检查各个时间框架的数据是否存在（使用4小时作为大趋势判断）
+	if st.Timeframe5m == nil || st.Timeframe15m == nil || st.Timeframe30m == nil || st.Timeframe4h == nil {
 		return ""
 	}
 
-	// 1. 检查3分钟信号
-	signal3m := st.Timeframe3m.Signal
-	if signal3m == "none" {
-		return "" // 3分钟没有信号，不满足条件
-	}
-
-	// 2. 检查5分钟信号（必须与3分钟一致）
 	signal5m := st.Timeframe5m.Signal
-	if signal5m == "none" || signal5m != signal3m {
-		return "" // 5分钟没有信号或与3分钟不一致
-	}
-
-	// 3. 检查30分钟和4小时大趋势是否一致
+	signal15m := st.Timeframe15m.Signal
 	signal30m := st.Timeframe30m.Signal
 	signal4h := st.Timeframe4h.Signal
 
-	// 大趋势（4小时）不可以超过30分钟的信号（即30分钟的信号不能与大趋势相反）
-	if signal30m != "none" && signal4h != "none" && signal30m != signal4h {
-		return "" // 30分钟和4小时不一致，不满足条件
+	// 1. 优化策略：优先考虑15m和30m（更稳定），如果它们一致，即使5m相反也可以开仓
+	// 策略优先级：15m+30m一致 > 5m+15m一致 > 5m+30m一致
+	var signalDirection string
+	var validSignals []string
+
+	// 优先检查15m和30m是否一致（最稳定的组合）
+	if signal15m != "none" && signal30m != "none" && signal15m == signal30m {
+		signalDirection = signal15m
+		validSignals = append(validSignals, "15m", "30m")
+		// 如果5m与15m+30m相反，标记为冲突但不阻止交易
+		if signal5m != "none" && signal5m != signalDirection {
+			signals = append(signals, fmt.Sprintf("⚠️ 5m信号(%s)与15m+30m相反，但15m+30m一致，优先采用", signal5m))
+		} else if signal5m == signalDirection {
+			validSignals = append(validSignals, "5m")
+		}
+	} else if signal5m != "none" && signal15m != "none" && signal5m == signal15m {
+		// 其次检查5m和15m是否一致
+		signalDirection = signal5m
+		validSignals = append(validSignals, "5m", "15m")
+		if signal30m != "none" && signal30m != signalDirection {
+			signals = append(signals, fmt.Sprintf("⚠️ 30m信号(%s)与5m+15m相反", signal30m))
+		} else if signal30m == signalDirection {
+			validSignals = append(validSignals, "30m")
+		}
+	} else if signal5m != "none" && signal30m != "none" && signal5m == signal30m {
+		// 最后检查5m和30m是否一致
+		signalDirection = signal5m
+		validSignals = append(validSignals, "5m", "30m")
+		if signal15m != "none" && signal15m != signalDirection {
+			signals = append(signals, fmt.Sprintf("⚠️ 15m信号(%s)与5m+30m相反", signal15m))
+		} else if signal15m == signalDirection {
+			validSignals = append(validSignals, "15m")
+		}
+	} else {
+		// 没有任何两个时间框架一致，不满足条件
+		return "" // 信号不足或不一致
 	}
 
-	// 4. 检查量价关系
+	// 2. 检查4小时大趋势（大趋势不可以与5-15-30分钟相反）
+	// 如果4小时有信号，且与5-15-30分钟的信号相反，则不满足条件
+	if signal4h != "none" && signal4h != signalDirection {
+		return "" // 4小时大趋势与5-15-30分钟信号相反，不满足条件
+	}
+
+	// 3. 检查短期盈利优势（新增：判断是否有短期盈利潜力）
+	if marketData != nil {
+		hasAdvantage := false
+		advantageReasons := []string{}
+		
+		// 做多优势判断
+		if signalDirection == "long" {
+			// RSI < 40 表示超卖，有反弹潜力
+			if marketData.CurrentRSI7 < 40 {
+				hasAdvantage = true
+				advantageReasons = append(advantageReasons, fmt.Sprintf("RSI超卖(%.1f)", marketData.CurrentRSI7))
+			}
+			// MACD 负值但趋势向上（MACD值在改善）
+			if marketData.CurrentMACD < 0 && marketData.IntradaySeries != nil && len(marketData.IntradaySeries.MACDValues) >= 2 {
+				recentMACD := marketData.IntradaySeries.MACDValues[len(marketData.IntradaySeries.MACDValues)-1]
+				prevMACD := marketData.IntradaySeries.MACDValues[len(marketData.IntradaySeries.MACDValues)-2]
+				if recentMACD > prevMACD {
+					hasAdvantage = true
+					advantageReasons = append(advantageReasons, "MACD转强")
+				}
+			}
+			// 价格在EMA20下方，有反弹空间
+			if marketData.CurrentPrice < marketData.CurrentEMA20 {
+				hasAdvantage = true
+				advantageReasons = append(advantageReasons, "价格低于EMA20")
+			}
+		}
+		
+		// 做空优势判断
+		if signalDirection == "short" {
+			// RSI > 60 表示超买，有回调潜力
+			if marketData.CurrentRSI7 > 60 {
+				hasAdvantage = true
+				advantageReasons = append(advantageReasons, fmt.Sprintf("RSI超买(%.1f)", marketData.CurrentRSI7))
+			}
+			// MACD 正值但趋势向下（MACD值在恶化）
+			if marketData.CurrentMACD > 0 && marketData.IntradaySeries != nil && len(marketData.IntradaySeries.MACDValues) >= 2 {
+				recentMACD := marketData.IntradaySeries.MACDValues[len(marketData.IntradaySeries.MACDValues)-1]
+				prevMACD := marketData.IntradaySeries.MACDValues[len(marketData.IntradaySeries.MACDValues)-2]
+				if recentMACD < prevMACD {
+					hasAdvantage = true
+					advantageReasons = append(advantageReasons, "MACD转弱")
+				}
+			}
+			// 价格在EMA20上方，有回调空间
+			if marketData.CurrentPrice > marketData.CurrentEMA20 {
+				hasAdvantage = true
+				advantageReasons = append(advantageReasons, "价格高于EMA20")
+			}
+		}
+		
+		if hasAdvantage {
+			signals = append(signals, fmt.Sprintf("✅ 短期盈利优势：%s", strings.Join(advantageReasons, "、")))
+		} else {
+			// 没有明显优势，给出提示但不阻止交易
+			signals = append(signals, "⚠️ 短期盈利优势不明显，需谨慎")
+		}
+	}
+
+	// 4. 检查量价关系（放宽条件：只要不是明显不健康即可）
+	// 如果量价关系不健康，给出警告但不阻止交易
 	if !vp.PriceVolumeOK {
-		return "" // 量价关系不健康
+		signals = append(signals, "⚠️ 量价关系不够理想，但信号较强")
 	}
 
-	// 5. 检查成交量比率（建议在0.8-2.0之间）
+	// 5. 检查成交量比率（放宽条件：只要不是极端低即可）
 	volumeRatio := vp.VolumeRatio3m
-	if volumeRatio < 0.8 || volumeRatio > 2.0 {
-		// 成交量比率不在理想范围，但仍然可以交易，只是给出警告
-		signals = append(signals, fmt.Sprintf("⚠️ 成交量比率%.2f不在理想范围(0.8-2.0)", volumeRatio))
+	if volumeRatio < 0.3 {
+		// 成交量比率极低，给出警告但不阻止交易
+		signals = append(signals, fmt.Sprintf("⚠️ 成交量比率极低(%.2f)，流动性不足，需谨慎", volumeRatio))
+	} else if volumeRatio < 0.5 {
+		// 成交量比率较低，给出警告但不阻止交易
+		signals = append(signals, fmt.Sprintf("⚠️ 成交量比率较低(%.2f)，建议谨慎", volumeRatio))
+	} else if volumeRatio > 3.0 {
+		// 成交量比率过高，可能是异常波动
+		signals = append(signals, fmt.Sprintf("⚠️ 成交量比率较高(%.2f)，注意风险", volumeRatio))
 	}
 
 	// 如果所有条件都满足，生成交易信号
-	if signal3m == "long" && signal5m == "long" {
-		// 确认大趋势
-		if signal4h == "long" || signal4h == "none" {
-			// 如果4小时是long或none，且30分钟也是long或none，可以做多
-			if signal30m == "long" || signal30m == "none" {
-				signals = append(signals, "✅ 做多信号：3m和5m均为做多，大趋势(4h)和30m一致")
-				return strings.Join(signals, " | ")
-			}
-		}
-	} else if signal3m == "short" && signal5m == "short" {
-		// 确认大趋势
-		if signal4h == "short" || signal4h == "none" {
-			// 如果4小时是short或none，且30分钟也是short或none，可以做空
-			if signal30m == "short" || signal30m == "none" {
-				signals = append(signals, "✅ 做空信号：3m和5m均为做空，大趋势(4h)和30m一致")
-				return strings.Join(signals, " | ")
-			}
-		}
+	if signalDirection == "long" {
+		timeframeStr := strings.Join(validSignals, "、")
+		signals = append(signals, fmt.Sprintf("✅ 做多信号：%s信号统一为做多，4h大趋势(%s)不相反", timeframeStr, signal4h))
+		return strings.Join(signals, " | ")
+	} else if signalDirection == "short" {
+		timeframeStr := strings.Join(validSignals, "、")
+		signals = append(signals, fmt.Sprintf("✅ 做空信号：%s信号统一为做空，4h大趋势(%s)不相反", timeframeStr, signal4h))
+		return strings.Join(signals, " | ")
 	}
 
 	return "" // 不满足开仓条件

@@ -135,7 +135,9 @@ type SupertrendData struct {
 type SupertrendMultiTimeframe struct {
 	Timeframe3m  *SupertrendData `json:"timeframe_3m"`  // 3分钟
 	Timeframe5m  *SupertrendData `json:"timeframe_5m"`  // 5分钟
+	Timeframe15m *SupertrendData `json:"timeframe_15m"` // 15分钟
 	Timeframe30m *SupertrendData `json:"timeframe_30m"` // 30分钟
+	Timeframe1h  *SupertrendData `json:"timeframe_1h"`  // 1小时（大趋势）
 	Timeframe4h  *SupertrendData `json:"timeframe_4h"`  // 4小时（大趋势）
 }
 
