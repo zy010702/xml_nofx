@@ -30,11 +30,15 @@ func Get(symbol string) (*Data, error) {
 	}
 
 	// 获取5分钟K线数据（必须获取真实数据，不使用fallback）
+	// 5分钟信号对短期策略至关重要，需要确保数据准确
 	klines5m, err = WSMonitorCli.GetCurrentKlines(symbol, "5m")
 	if err != nil {
-		log.Printf("⚠️  获取 %s 5分钟K线失败: %v", symbol, err)
+		log.Printf("⚠️  获取 %s 5分钟K线失败: %v (5分钟信号对短期策略至关重要)", symbol, err)
 		// 不使用fallback，保持为空，后续会标记为数据不足
 		klines5m = []Kline{}
+	} else if len(klines5m) < 11 {
+		// 5分钟数据不足，Supertrend计算需要至少11根K线（period+1）
+		log.Printf("⚠️  %s 5分钟K线数据不足(%d根，需要至少11根)，可能影响信号准确性", symbol, len(klines5m))
 	}
 
 	// 获取15分钟K线数据（必须获取真实数据，不使用fallback）
