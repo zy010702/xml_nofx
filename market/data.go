@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Get 获取指定代币的市场数据
@@ -18,9 +19,21 @@ func Get(symbol string) (*Data, error) {
 	// 标准化symbol
 	symbol = Normalize(symbol)
 	// 获取3分钟K线数据 (最近100个)
+	// 3分钟信号对短期获利至关重要，需要确保数据准确
 	klines3m, err = WSMonitorCli.GetCurrentKlines(symbol, "3m") // 多获取一些用于计算
 	if err != nil {
-		return nil, fmt.Errorf("获取3分钟K线失败: %v", err)
+		return nil, fmt.Errorf("获取3分钟K线失败: %v (3分钟信号对短期获利至关重要)", err)
+	} else if len(klines3m) < 11 {
+		// 3分钟数据不足，Supertrend计算需要至少11根K线（period+1）
+		log.Printf("⚠️  %s 3分钟K线数据不足(%d根，需要至少11根)，可能影响信号准确性（3分钟信号对短期获利至关重要）", symbol, len(klines3m))
+	} else {
+		// 验证3分钟数据的新鲜度：最新K线应该在最近5分钟内（3分钟K线 + 2分钟容差）
+		latestKlineTime := klines3m[len(klines3m)-1].CloseTime
+		currentTime := time.Now().UnixMilli()
+		timeDiff := currentTime - latestKlineTime
+		if timeDiff > 5*60*1000 { // 超过5分钟，数据可能过时
+			log.Printf("⚠️  %s 3分钟K线数据可能过时（最新K线时间差: %.1f分钟），可能影响信号准确性", symbol, float64(timeDiff)/(60*1000))
+		}
 	}
 
 	// 获取4小时K线数据 (最近100个) - 先获取，用于30分钟fallback

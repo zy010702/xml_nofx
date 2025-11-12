@@ -263,9 +263,10 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	// 2. Supertrend 多时间框架交易策略
 	sb.WriteString("# 📈 Supertrend 多时间框架交易策略\n\n")
 	sb.WriteString("## 核心交易规则：\n\n")
-	sb.WriteString("1. **信号触发条件（优化后，短期策略优先5分钟信号）**：\n")
+	sb.WriteString("1. **信号触发条件（优化后，短期策略优先5分钟信号，3分钟信号对短期获利至关重要）**：\n")
 	sb.WriteString("   - 优先级策略：5m+15m一致（优先，最敏感，5分钟信号改变可能影响后续）> 15m+30m一致 > 5m+30m一致\n")
-	sb.WriteString("   - 3分钟信号作为参考：如果3m与5m+15m一致，信号更强；如果相反，给出警告但不阻止\n")
+	sb.WriteString("   - 🔴 3分钟信号对短期获利至关重要：如果3m与主信号相反，需要非常谨慎（3分钟信号变化可能预示短期趋势变化）\n")
+	sb.WriteString("   - ✅ 如果3m与主信号一致，信号更强，可以更积极开仓\n")
 	sb.WriteString("   - 5分钟信号最重要：因为短期策略中，5分钟信号改变可能改变后续信号，需要优先关注\n")
 	sb.WriteString("   - 大趋势验证（灵活策略）：1小时为主，4小时为辅\n")
 	sb.WriteString("   - ✅ 只要1小时或4小时其中一个与交易信号一致，就允许开仓（更灵活）\n")
@@ -282,15 +283,15 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	sb.WriteString("4. **时间框架优先级（短期策略优化）**：\n")
 	sb.WriteString("   - 5分钟：核心信号（最重要，5分钟信号改变可能影响后续信号）\n")
 	sb.WriteString("   - 15分钟：核心确认（与5分钟信号一致，形成主要交易信号）\n")
-	sb.WriteString("   - 3分钟：参考信号（如果与5m+15m一致，信号更强；相反则警告但不阻止）\n")
+	sb.WriteString("   - 🔴 3分钟：关键信号（对短期获利至关重要，如果与主信号相反，需要非常谨慎）\n")
 	sb.WriteString("   - 30分钟：中期确认（与5-15分钟信号一致）\n")
 	sb.WriteString("   - 1小时：大趋势判断（主要参考，必须与交易信号一致或至少1h/4h其中一个一致）\n")
 	sb.WriteString("   - 4小时：大趋势参考（辅助参考，与1小时配合使用）\n\n")
-	sb.WriteString("5. **开仓条件总结（优化后，短期策略优先5分钟信号）**：\n")
+	sb.WriteString("5. **开仓条件总结（优化后，短期策略优先5分钟信号，3分钟信号对短期获利至关重要）**：\n")
 	sb.WriteString("   - ✅ 5m+15m一致（优先，最敏感，5分钟信号最重要）\n")
 	sb.WriteString("   - ✅ 或 15m+30m一致（备选，但需注意5分钟信号）\n")
 	sb.WriteString("   - ✅ 或 5m+30m一致（备选，但需注意15分钟信号）\n")
-	sb.WriteString("   - ✅ 3分钟信号作为参考：与主信号一致时信号更强，相反时警告但不阻止\n")
+	sb.WriteString("   - 🔴 3分钟信号对短期获利至关重要：与主信号一致时信号更强，相反时需要非常谨慎（3分钟信号变化可能预示短期趋势变化）\n")
 	sb.WriteString("   - ✅ 大趋势验证：1小时或4小时至少一个与交易信号一致（灵活策略）\n")
 	sb.WriteString("   - ❌ 如果1小时和4小时都与交易信号相反，则阻止开仓（风险控制）\n")
 	sb.WriteString("   - ✅ 有短期盈利优势时（RSI超买/超卖、MACD转强/转弱等），信号更强\n")
@@ -411,7 +412,7 @@ func buildUserPrompt(ctx *Context) string {
 			sb.WriteString("📊 Supertrend 多时间框架分析:\n")
 			st := marketData.SupertrendData
 			if st.Timeframe3m != nil {
-				sb.WriteString(fmt.Sprintf("  3m (参考): %s (信号: %s)\n", st.Timeframe3m.Trend, st.Timeframe3m.Signal))
+				sb.WriteString(fmt.Sprintf("  3m (关键): %s (信号: %s) - 短期获利依赖3分钟信号\n", st.Timeframe3m.Trend, st.Timeframe3m.Signal))
 			}
 			if st.Timeframe5m != nil {
 				sb.WriteString(fmt.Sprintf("  5m (核心): %s (信号: %s)\n", st.Timeframe5m.Trend, st.Timeframe5m.Signal))
@@ -717,12 +718,14 @@ func analyzeSupertrendSignal(st *market.SupertrendMultiTimeframe, vp *market.Vol
 	if signal5m != "none" && signal15m != "none" && signal5m == signal15m {
 		signalDirection = signal5m
 		validSignals = append(validSignals, "5m", "15m")
-		// 3分钟信号作为参考（如果一致则信号更强）
+		// 3分钟信号对短期获利至关重要：如果相反，需要非常谨慎
 		if signal3m != "none" && signal3m == signalDirection {
 			validSignals = append(validSignals, "3m")
-			signals = append(signals, fmt.Sprintf("✅ 3m信号(%s)与5m+15m一致，信号强化", signal3m))
+			signals = append(signals, fmt.Sprintf("✅ 3m信号(%s)与5m+15m一致，信号强化（3分钟信号对短期获利至关重要）", signal3m))
 		} else if signal3m != "none" && signal3m != signalDirection {
-			signals = append(signals, fmt.Sprintf("⚠️ 3m信号(%s)与5m+15m相反，但5m+15m为主信号", signal3m))
+			// 3分钟信号相反，需要非常谨慎（3分钟信号变化可能预示短期趋势变化）
+			signals = append(signals, fmt.Sprintf("🔴 3m信号(%s)与5m+15m相反，3分钟信号变化需非常谨慎（短期获利依赖3分钟信号）", signal3m))
+			// 3分钟信号相反时，降低信号强度，但不完全阻止（给用户决策空间）
 		}
 		// 30分钟信号作为确认
 		if signal30m != "none" && signal30m != signalDirection {
@@ -740,12 +743,13 @@ func analyzeSupertrendSignal(st *market.SupertrendMultiTimeframe, vp *market.Vol
 		} else if signal5m == signalDirection {
 			validSignals = append(validSignals, "5m")
 		}
-		// 3分钟信号作为参考
+		// 3分钟信号对短期获利至关重要：如果相反，需要非常谨慎
 		if signal3m != "none" && signal3m == signalDirection {
 			validSignals = append(validSignals, "3m")
-			signals = append(signals, fmt.Sprintf("✅ 3m信号(%s)与15m+30m一致，信号强化", signal3m))
+			signals = append(signals, fmt.Sprintf("✅ 3m信号(%s)与15m+30m一致，信号强化（3分钟信号对短期获利至关重要）", signal3m))
 		} else if signal3m != "none" && signal3m != signalDirection {
-			signals = append(signals, fmt.Sprintf("⚠️ 3m信号(%s)与15m+30m相反", signal3m))
+			// 3分钟信号相反，需要非常谨慎
+			signals = append(signals, fmt.Sprintf("🔴 3m信号(%s)与15m+30m相反，3分钟信号变化需非常谨慎（短期获利依赖3分钟信号）", signal3m))
 		}
 	} else if signal5m != "none" && signal30m != "none" && signal5m == signal30m {
 		// 最后检查5m和30m是否一致（备选方案）
@@ -756,12 +760,13 @@ func analyzeSupertrendSignal(st *market.SupertrendMultiTimeframe, vp *market.Vol
 		} else if signal15m == signalDirection {
 			validSignals = append(validSignals, "15m")
 		}
-		// 3分钟信号作为参考
+		// 3分钟信号对短期获利至关重要：如果相反，需要非常谨慎
 		if signal3m != "none" && signal3m == signalDirection {
 			validSignals = append(validSignals, "3m")
-			signals = append(signals, fmt.Sprintf("✅ 3m信号(%s)与5m+30m一致，信号强化", signal3m))
+			signals = append(signals, fmt.Sprintf("✅ 3m信号(%s)与5m+30m一致，信号强化（3分钟信号对短期获利至关重要）", signal3m))
 		} else if signal3m != "none" && signal3m != signalDirection {
-			signals = append(signals, fmt.Sprintf("⚠️ 3m信号(%s)与5m+30m相反", signal3m))
+			// 3分钟信号相反，需要非常谨慎
+			signals = append(signals, fmt.Sprintf("🔴 3m信号(%s)与5m+30m相反，3分钟信号变化需非常谨慎（短期获利依赖3分钟信号）", signal3m))
 		}
 	} else {
 		// 没有任何两个时间框架一致，不满足条件
